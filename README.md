@@ -25,7 +25,7 @@ Ensure you have **Python 3.8+** installed.
 
 ### Dependencies
 Install required packages using:
-```sh
+```bash
 pip install -r requirements.txt
 ```
 ## Download the checkpoints 
@@ -47,11 +47,11 @@ bash download_ckpts.sh
 ## Usage
 ### GUI-based Segmentation
 Run the GUI tool with:
-```sh
+```bash
 python gui.py <image_directory> <model_name>
 ```
 Example:
-```sh
+```bash
 python gui.py /path/to/images sam2.1-hiera-tiny
 ```
 
@@ -63,7 +63,7 @@ ssh -L PORT:127.0.0.1:PORT username@ip_address
 for example if you want to use 8082, you just need to replace PORT above with 8082. 
 
 After that you can launch the Streamlit app with:
-```sh
+```bash
 streamlit run stapp.py --server.address 127.0.0.1 --server.port 8082
 ```
 
