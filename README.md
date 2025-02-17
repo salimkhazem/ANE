@@ -3,6 +3,9 @@
 ## Overview
 This project provides an image annotation tool for segmentation leveraging the **SAM2 (Segment Anything Model v2)** framework. It includes both a GUI-based interactive segmentation tool (`gui.py`) and a web-based application built with **Streamlit** (`stapp.py`).
 
+![Example](https://github.com/user-attachments/assets/d5fa944e-fefa-4092-b24c-1efe6ca4c977)
+
+
 ## Features
 - **Interactive Segmentation (GUI-based)**
   - Load images from a directory
