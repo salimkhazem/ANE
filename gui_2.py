@@ -490,7 +490,7 @@ class InteractiveSegmentationTool:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 4:
         print("Usage: python script.py <folder_path> <config_key> <device>")
         sys.exit(1)
 
