@@ -388,7 +388,8 @@ class InteractiveSegmentationTool:
             return
         self.current_index = new_idx
         self.image_info.config(
-            text=f"Image: {self.current_index + 1}/{len(self.image_collection)}"
+            text=f"Image: {self.current_index +
+                           1}/{len(self.image_collection)}"
         )
         self.initialize_segmentation()
         self.refresh_display()
@@ -398,11 +399,12 @@ class InteractiveSegmentationTool:
             self.export_dir.mkdir()
         for path_str, mask in zip(self.image_collection.image_paths, self.mask_storage):
             if mask is not None:
-                mask_img = Image.fromarray(mask.astype(np.uint8))
+                mask_img = Image.fromarray((mask*255.0).astype(np.uint8)) 
                 src_path = pathlib.Path(path_str)
                 out_file = str(self.export_dir / src_path.stem) + ".png"
                 print(f"Saving {out_file}")
                 mask_img.save(out_file)
+                print(f"Mask saved to {out_file}")
 
     def initialize_ui(self):
         self.root = tk.Tk()
@@ -425,7 +427,7 @@ class InteractiveSegmentationTool:
         self.image_info = tk.Label(
             control_frame,
             text=f"Image: {
-                                   self.current_index + 1}/{len(self.image_collection)}",
+                self.current_index + 1}/{len(self.image_collection)}",
         )
         self.image_info.pack(padx=5, pady=5)
 
@@ -445,7 +447,7 @@ class InteractiveSegmentationTool:
         self.mode_label = tk.Label(
             mode_frame,
             text=f"Mode:\n{
-                                   self.input_mode.capitalize()}",
+                self.input_mode.capitalize()}",
             width=20,
         )
         self.mode_label.pack(padx=5, pady=5)
