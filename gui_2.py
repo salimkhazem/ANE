@@ -55,8 +55,8 @@ class ImageCollector:
 
 
 class InteractiveSegmentationTool:
-    def __init__(self, folder_path, config_key):
-        self.compute_device = "cpu"  # or "cuda" if available
+    def __init__(self, folder_path, config_key, device):
+        self.compute_device = device  # or "cuda" if available
         self.offload_video = False
         self.offload_state = False
 
@@ -491,9 +491,10 @@ class InteractiveSegmentationTool:
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("Usage: python script.py <folder_path> <config_key>")
+        print("Usage: python script.py <folder_path> <config_key> <device>")
         sys.exit(1)
 
     folder_path = sys.argv[1]
     config_key = sys.argv[2]
-    InteractiveSegmentationTool(folder_path, config_key)
+    device = sys.argv[3]
+    InteractiveSegmentationTool(folder_path, config_key, device)
