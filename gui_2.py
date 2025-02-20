@@ -152,9 +152,9 @@ class InteractiveSegmentationTool:
             sorted_idx = np.argsort(scores)[::-1]
             masks = masks[sorted_idx[0]]
         bg_mask = self.mask_storage[self.current_index] == 0
-        self.mask_storage[self.current_index][np.logical_and(bg_mask, masks == 1.0)] = (
-            ann_id
-        )
+        self.mask_storage[self.current_index][
+            np.logical_and(bg_mask, masks == 1.0)
+        ] = ann_id
 
     def refresh_display(self, event=None):
         self.canvas.delete("all")
@@ -398,7 +398,7 @@ class InteractiveSegmentationTool:
             self.export_dir.mkdir()
         for path_str, mask in zip(self.image_collection.image_paths, self.mask_storage):
             if mask is not None:
-                mask_img = Image.fromarray((mask*255.0).astype(np.uint8))
+                mask_img = Image.fromarray((mask * 255.0).astype(np.uint8))
                 src_path = pathlib.Path(path_str)
                 out_file = str(self.export_dir / src_path.stem) + ".png"
                 print(f"Saving {out_file}")
