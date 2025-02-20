@@ -1,19 +1,18 @@
 # coding: utf-8
-
 import sys
-import pathlib
 import glob
-from collections import OrderedDict
-
+import torch
+import sv_ttk
+import pathlib
 import numpy as np
 import tkinter as tk
 import tkinter.filedialog
+
 from tkinter import ttk
 from PIL import Image, ImageTk
-import torch
 from sam2.build_sam import build_sam2
+from collections import OrderedDict
 from sam2.sam2_image_predictor import SAM2ImagePredictor
-import sv_ttk
 
 
 def create_predictor(config_key, compute_device):
@@ -399,7 +398,7 @@ class InteractiveSegmentationTool:
             self.export_dir.mkdir()
         for path_str, mask in zip(self.image_collection.image_paths, self.mask_storage):
             if mask is not None:
-                mask_img = Image.fromarray((mask*255.0).astype(np.uint8)) 
+                mask_img = Image.fromarray((mask*255.0).astype(np.uint8))
                 src_path = pathlib.Path(path_str)
                 out_file = str(self.export_dir / src_path.stem) + ".png"
                 print(f"Saving {out_file}")
