@@ -1,4 +1,4 @@
-# Advanced Annotation Tool
+# Advanced Annotation Tool (Gaime case)
 
 This is an enhanced annotation tool built for object segmentation and metadata capture. It allows users to segment objects in images and annotate them with additional information like class, shape, color, and value.
 
@@ -57,7 +57,7 @@ For convenience, especially when using the Azure OpenAI features, you can use th
 1. Edit the run.sh script to include your Azure OpenAI API key:
    ```bash
    # Open the script
-   nano run.sh
+   vim run.sh
    
    # Ensure it contains these lines, replacing with your actual API key:
    export AZURE_OPENAI_API_KEY="your-api-key-here"
@@ -180,8 +180,7 @@ For an image with 9 cards and 2 tokens:
   "is_manual_count": true,
   "legend": "Dans cette image, on peut voir 9 cartes et 2 jetons. Les jetons se trouvent à droite des cartes."
 }
-```
-`````
+
 
 
 
