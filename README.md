@@ -1,7 +1,11 @@
 # Advanced Annotation Tool (Gaime case)
 
 This is an enhanced annotation tool built for object segmentation and metadata capture. It allows users to segment objects in images and annotate them with additional information like class, shape, color, and value.
+
+
 ![Gaime](https://github.com/user-attachments/assets/0723caec-5a28-4664-9b49-976edfefb367)
+
+
 ## Features
 
 - Interactive segmentation using SAM2 models
