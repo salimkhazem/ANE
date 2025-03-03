@@ -3,12 +3,13 @@
 import sys
 import pathlib
 import glob
+import json
 from collections import OrderedDict
 
 import numpy as np
 import tkinter as tk
 import tkinter.filedialog
-from tkinter import ttk
+from tkinter import ttk, colorchooser, simpledialog
 from PIL import Image, ImageTk
 import torch
 from sam2.build_sam import build_sam2
@@ -54,6 +55,130 @@ class ImageCollector:
         return len(self.image_paths)
 
 
+class ManualCountDialog(tk.Toplevel):
+    def __init__(self, parent, available_classes, current_counts=None):
+        super().__init__(parent)
+        self.title("Manual Object Count")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        
+        self.available_classes = available_classes
+        self.count_vars = {}
+        self.result = None
+        
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create a label and entry for each class
+        ttk.Label(main_frame, text="Specify the count for each object class:", 
+                  font=("", 10, "bold")).grid(column=0, row=0, columnspan=2, pady=5, sticky=tk.W)
+        
+        for i, cls in enumerate(self.available_classes):
+            ttk.Label(main_frame, text=f"{cls}:").grid(column=0, row=i+1, sticky=tk.W, padx=5, pady=2)
+            
+            count_var = tk.StringVar(value=str(current_counts.get(cls, 0)) if current_counts else "0")
+            self.count_vars[cls] = count_var
+            
+            entry = ttk.Entry(main_frame, textvariable=count_var, width=5)
+            entry.grid(column=1, row=i+1, sticky=tk.W, padx=5, pady=2)
+        
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.grid(column=0, row=len(self.available_classes)+1, columnspan=2, pady=10)
+        
+        ttk.Button(btn_frame, text="Save", command=self.save_counts).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.cancel).pack(side=tk.LEFT, padx=5)
+        
+        # Center the dialog on the parent window
+        self.update_idletasks()
+        parent_x = parent.winfo_x()
+        parent_y = parent.winfo_y()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+        
+        dialog_width = self.winfo_width()
+        dialog_height = self.winfo_height()
+        
+        x = parent_x + (parent_width - dialog_width) // 2
+        y = parent_y + (parent_height - dialog_height) // 2
+        
+        self.geometry(f"+{x}+{y}")
+        
+        self.wait_window(self)
+    
+    def save_counts(self):
+        try:
+            # Convert all values to integers
+            self.result = {cls: int(var.get()) for cls, var in self.count_vars.items()}
+            self.destroy()
+        except ValueError:
+            # Show error if any value is not an integer
+            tk.messagebox.showerror("Invalid Input", "All values must be integers.")
+    
+    def cancel(self):
+        self.result = None
+        self.destroy()
+
+
+class ClassSelectionDialog(tk.Toplevel):
+    def __init__(self, parent, available_classes):
+        super().__init__(parent)
+        self.title("Select Object Class")
+        self.transient(parent)
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", lambda: None)  # Disable window close button
+        
+        self.result = None
+        self.available_classes = available_classes
+        
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(main_frame, text="Select the class for this object:", 
+                  font=("", 10, "bold")).pack(pady=5)
+        
+        self.class_var = tk.StringVar(value=available_classes[0])
+        
+        # Create a dropdown for class selection
+        class_combo = ttk.Combobox(main_frame, textvariable=self.class_var, values=available_classes)
+        class_combo.pack(padx=5, pady=10, fill=tk.X)
+        
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(pady=10)
+        
+        ttk.Button(btn_frame, text="Confirm", command=self.confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.cancel).pack(side=tk.LEFT, padx=5)
+        
+        # Center the dialog
+        self.update_idletasks()
+        parent_x = parent.winfo_x()
+        parent_y = parent.winfo_y()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+        
+        dialog_width = self.winfo_width()
+        dialog_height = self.winfo_height()
+        
+        x = parent_x + (parent_width - dialog_width) // 2
+        y = parent_y + (parent_height - dialog_height) // 2
+        
+        self.geometry(f"+{x}+{y}")
+        self.focus_set()
+        
+        # Make this dialog modal
+        self.wait_window(self)
+        
+    def confirm(self):
+        self.result = self.class_var.get()
+        self.destroy()
+        
+    def cancel(self):
+        self.result = None
+        self.destroy()
+
+
 class InteractiveSegmentationTool:
     def __init__(self, folder_path, config_key, device):
         self.compute_device = device  # or "cuda" if available
@@ -75,7 +200,23 @@ class InteractiveSegmentationTool:
         self.segmenter = create_predictor(config_key, self.compute_device)
 
         self.export_dir = pathlib.Path("./masks")
+        self.json_export_dir = pathlib.Path("./annotations")
         self.current_index = 0
+        
+        # Define available object classes
+        self.available_classes = ["person", "car", "building", "card", "animal", "furniture", "other", "token", "dice"]
+        self.available_shapes = ["rectangle", "circle", "triangle", "irregular"]
+        self.available_values = ["ace", "2", "3", "4", "5", "6", "7", "8", "9", "10", "jack", "queen", "king", "joker", "none"]
+        
+        # Object metadata storage
+        self.object_metadata = {}  # Indexed by image_idx and then object_id
+        
+        # Manual object counts storage
+        self.manual_counts = {}  # Indexed by image_idx
+        
+        # Current class selection
+        self.current_class = self.available_classes[0]
+        
         self.load_images(folder_path)
 
         self.initialize_ui()
@@ -85,17 +226,28 @@ class InteractiveSegmentationTool:
         if folder_path is None:
             refresh = True
             folder_path = tkinter.filedialog.askdirectory(
-                initialdir=self.image_collection.folder_path,
+                initialdir=self.image_collection.folder_path if hasattr(self, 'image_collection') else ".",
                 title="Select an image folder",
             )
             if not folder_path:
                 return
         self.export_dir = pathlib.Path("./masks")
+        self.json_export_dir = pathlib.Path("./annotations")
+        if not self.json_export_dir.exists():
+            self.json_export_dir.mkdir(parents=True, exist_ok=True)
 
         self.image_collection = ImageCollector(folder_path, self.compute_device)
 
         self.mask_storage = [None] * len(self.image_collection)
         self.annotation_counter = [1] * len(self.image_collection)
+        
+        # Initialize object metadata and manual counts for each image
+        for i in range(len(self.image_collection)):
+            if i not in self.object_metadata:
+                self.object_metadata[i] = {}
+            if i not in self.manual_counts:
+                self.manual_counts[i] = {}
+                
         self.initialize_segmentation()
 
         if refresh:
@@ -156,6 +308,28 @@ class InteractiveSegmentationTool:
         self.mask_storage[self.current_index][np.logical_and(bg_mask, masks == 1.0)] = (
             ann_id
         )
+        
+        # Store bounding box for the new annotation
+        if ann_id not in self.object_metadata[self.current_index]:
+            self.object_metadata[self.current_index][ann_id] = {
+                "id": ann_id,
+                "class": self.current_class,  # Use the pre-selected class
+                "shape": self.shape_var.get(),
+                "color": self.selected_color.get(),
+                "value": self.value_var.get(),
+                "bbox": bbox,
+                "centroid": None,
+                "area": 0
+            }
+            
+            # Calculate centroid and area for the mask
+            if masks is not None:
+                y_indices, x_indices = np.where(masks == 1.0)
+                if len(y_indices) > 0 and len(x_indices) > 0:
+                    centroid_x = np.mean(x_indices)
+                    centroid_y = np.mean(y_indices)
+                    self.object_metadata[self.current_index][ann_id]["centroid"] = [centroid_x, centroid_y]
+                    self.object_metadata[self.current_index][ann_id]["area"] = len(y_indices)
 
     def refresh_display(self, event=None):
         self.canvas.delete("all")
@@ -187,7 +361,7 @@ class InteractiveSegmentationTool:
 
         canvas_ratio = canvas_w / canvas_h
         img_ratio = display_img.width / display_img.height
-        if canvas_ratio > img_ratio:
+        if (canvas_ratio > img_ratio):
             new_w = int(canvas_h * img_ratio)
             if new_w == 0:
                 new_w = canvas_w
@@ -285,6 +459,11 @@ class InteractiveSegmentationTool:
             self.user_prompts[self.current_index]["negative"].append([img_x, img_y])
 
     def handle_mouse_press(self, event):
+        # Check if we need to select a class first
+        if not hasattr(self, 'current_class') or self.current_class is None:
+            if not self.select_class_before_annotation():
+                return  # User cancelled class selection
+            
         start_x, start_y = self.screen_to_image_coords(event.x, event.y)
         if (
             start_x < 0
@@ -324,17 +503,22 @@ class InteractiveSegmentationTool:
                 self.refresh_display()
 
     def process_keystroke(self, event):
+        # For mode changes, update the current class first
+        if event.char in ["p", "n", "b"]:
+            if not self.select_class_before_annotation():
+                return
+                
         if event.char == "p":
             self.input_mode = "point"
             self.point_type = "positive"
-            self.mode_label.config(text="Mode:\nPoint (Positive)")
+            self.mode_label.config(text=f"Mode:\nPoint (Positive)\nClass: {self.current_class}")
         elif event.char == "n":
             self.input_mode = "point"
             self.point_type = "negative"
-            self.mode_label.config(text="Mode:\nPoint (Negative)")
+            self.mode_label.config(text=f"Mode:\nPoint (Negative)\nClass: {self.current_class}")
         elif event.char == "b":
             self.input_mode = "box"
-            self.mode_label.config(text="Mode:\nBox")
+            self.mode_label.config(text=f"Mode:\nBox\nClass: {self.current_class}")
         elif event.keysym == "Left":
             self.switch_image(max(0, self.current_index - 1))
             self.image_slider.set(self.current_index)
@@ -367,6 +551,7 @@ class InteractiveSegmentationTool:
         elif event.char == "q":
             self.root.quit()
         elif event.keysym == "Return":
+            # Update object metadata before creating a new annotation
             self.annotation_counter[self.current_index] += 1
             self.user_prompts[self.current_index]["positive"] = []
             self.user_prompts[self.current_index]["negative"] = []
@@ -392,7 +577,14 @@ class InteractiveSegmentationTool:
                            1}/{len(self.image_collection)}"
         )
         self.initialize_segmentation()
+        self.update_count_indicator()  # Update the manual count indicator
         self.refresh_display()
+
+    def select_color(self):
+        color = colorchooser.askcolor(title="Select a color for the object")
+        if color[1]: # color is [RGB tuple, hex string]
+            self.selected_color.set(color[1])
+            self.color_button.configure(background=color[1])
 
     def export_masks(self):
         if not self.export_dir.exists():
@@ -405,10 +597,206 @@ class InteractiveSegmentationTool:
                 print(f"Saving {out_file}")
                 mask_img.save(out_file)
                 print(f"Mask saved to {out_file}")
+        
+        # Export JSON annotations
+        self.export_json_annotations()
+
+    def export_json_annotations(self):
+        """Export annotations to JSON files as specified in requirements"""
+        if not self.json_export_dir.exists():
+            self.json_export_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create the three types of JSON files
+        self.export_detailed_annotations()
+        self.export_object_list()
+        self.export_object_counts()
+        
+    def export_detailed_annotations(self):
+        """Export detailed annotations with positions and relations"""
+        for img_idx, img_path in enumerate(self.image_collection.image_paths):
+            if img_idx not in self.object_metadata or not self.object_metadata[img_idx]:
+                continue
+                
+            img_filename = pathlib.Path(img_path).stem
+            annotations = []
+            
+            # Calculate relative positions
+            objects = list(self.object_metadata[img_idx].values())
+            for obj in objects:
+                obj_data = {
+                    "id": obj["id"],
+                    "class": obj["class"],
+                    "shape": obj["shape"],
+                    "color": obj["color"],
+                    "value": obj["value"],
+                    "absolute_position": {
+                        "bbox": obj["bbox"],
+                        "centroid": obj["centroid"],
+                        "area": obj["area"]
+                    },
+                    "relative_positions": []
+                }
+                
+                # Calculate relative positions to other objects
+                if obj["centroid"] is not None:
+                    for other_obj in objects:
+                        if other_obj["id"] != obj["id"] and other_obj["centroid"] is not None:
+                            dx = other_obj["centroid"][0] - obj["centroid"][0]
+                            dy = other_obj["centroid"][1] - obj["centroid"][1]
+                            distance = np.sqrt(dx*dx + dy*dy)
+                            
+                            # Determine direction (N, NE, E, SE, S, SW, W, NW)
+                            angle = np.arctan2(dy, dx) * 180 / np.pi
+                            direction = ""
+                            if -22.5 <= angle < 22.5:
+                                direction = "E"
+                            elif 22.5 <= angle < 67.5:
+                                direction = "SE"
+                            elif 67.5 <= angle < 112.5:
+                                direction = "S"
+                            elif 112.5 <= angle < 157.5:
+                                direction = "SW"
+                            elif 157.5 <= angle <= 180 or -180 <= angle < -157.5:
+                                direction = "W"
+                            elif -157.5 <= angle < -112.5:
+                                direction = "NW"
+                            elif -112.5 <= angle < -67.5:
+                                direction = "N"
+                            elif -67.5 <= angle < -22.5:
+                                direction = "NE"
+                                
+                            obj_data["relative_positions"].append({
+                                "to_object_id": other_obj["id"],
+                                "to_object_class": other_obj["class"],
+                                "distance": float(distance),
+                                "direction": direction
+                            })
+                            
+                annotations.append(obj_data)
+            
+            # Save to file
+            with open(f"{self.json_export_dir}/{img_filename}_detailed.json", 'w') as f:
+                json.dump({"image": img_filename, "annotations": annotations}, f, indent=2)
+            print(f"Detailed annotations saved to {self.json_export_dir}/{img_filename}_detailed.json")
+            
+    def export_object_list(self):
+        """Export list of all objects in each image"""
+        for img_idx, img_path in enumerate(self.image_collection.image_paths):
+            if img_idx not in self.object_metadata or not self.object_metadata[img_idx]:
+                continue
+                
+            img_filename = pathlib.Path(img_path).stem
+            objects_list = []
+            
+            for obj_id, obj_data in self.object_metadata[img_idx].items():
+                objects_list.append({
+                    "id": obj_data["id"],
+                    "class": obj_data["class"],
+                    "shape": obj_data["shape"],
+                    "color": obj_data["color"],
+                    "value": obj_data["value"]
+                })
+            
+            # Save to file
+            with open(f"{self.json_export_dir}/{img_filename}_objects.json", 'w') as f:
+                json.dump({
+                    "image": img_filename,
+                    "object_count": len(objects_list),
+                    "objects": objects_list
+                }, f, indent=2)
+            print(f"Object list saved to {self.json_export_dir}/{img_filename}_objects.json")
+            
+    def export_object_counts(self):
+        """Export count of objects by class for each image"""
+        for img_idx, img_path in enumerate(self.image_collection.image_paths):
+            img_filename = pathlib.Path(img_path).stem
+            
+            # Use manual counts if available, otherwise calculate from segmentations
+            if img_idx in self.manual_counts and any(self.manual_counts[img_idx].values()):
+                class_counts = self.manual_counts[img_idx].copy()
+                total_count = sum(class_counts.values())
+                is_manual = True
+                
+                # Create a list of objects with IDs for each class
+                objects_by_class = {}
+                current_id = 1
+                for class_name, count in class_counts.items():
+                    objects_by_class[class_name] = []
+                    for i in range(count):
+                        objects_by_class[class_name].append({
+                            "id": current_id,
+                            "class": class_name
+                        })
+                        current_id += 1
+            else:
+                if img_idx not in self.object_metadata or not self.object_metadata[img_idx]:
+                    continue
+                    
+                class_counts = {}
+                objects_by_class = {}
+                
+                # Group existing objects by class
+                for obj_id, obj_data in self.object_metadata[img_idx].items():
+                    obj_class = obj_data["class"]
+                    if obj_class in class_counts:
+                        class_counts[obj_class] += 1
+                    else:
+                        class_counts[obj_class] = 1
+                        objects_by_class[obj_class] = []
+                        
+                    # Add this object to its class group
+                    objects_by_class[obj_class].append({
+                        "id": obj_id,
+                        "class": obj_class
+                    })
+                    
+                total_count = len(self.object_metadata[img_idx])
+                is_manual = False
+                
+            # Ensure all classes are in the counts
+            for class_name in self.available_classes:
+                if class_name not in class_counts:
+                    class_counts[class_name] = 0
+            
+            # Save to file to json (image_name_counts.json)
+            with open(f"{self.json_export_dir}/{img_filename}_counts.json", 'w') as f:
+                json.dump({
+                    "image": img_filename,
+                    "total_objects": total_count,
+                    "class_counts": class_counts,
+                    "objects_by_class": objects_by_class,
+                    "is_manual_count": is_manual
+                }, f, indent=2)
+            print(f"Object counts saved to {self.json_export_dir}/{img_filename}_counts.json")
+
+    def open_manual_count_dialog(self):
+        """Open a dialog to manually set the object counts for the current image"""
+        current_counts = self.manual_counts.get(self.current_index, {})
+        dialog = ManualCountDialog(self.root, self.available_classes, current_counts)
+        
+        if dialog.result is not None:
+            self.manual_counts[self.current_index] = dialog.result
+            self.update_count_indicator()
+    
+    def update_count_indicator(self):
+        """Update the UI to show if manual counts are set for this image"""
+        if self.current_index in self.manual_counts and any(self.manual_counts[self.current_index].values()):
+            self.manual_count_indicator.config(foreground="green", text="Manual counts: Set ✓")
+        else:
+            self.manual_count_indicator.config(foreground="red", text="Manual counts: Not set")
+
+    def select_class_before_annotation(self):
+        """Open a dialog to select the class before starting an annotation"""
+        dialog = ClassSelectionDialog(self.root, self.available_classes)
+        if dialog.result:
+            self.current_class = dialog.result
+            self.class_var.set(dialog.result)
+            return True
+        return False
 
     def initialize_ui(self):
         self.root = tk.Tk()
-        self.root.title("General Segmentation Tool")
+        self.root.title("Advanced Annotation Tool")
 
         main_frame = ttk.Frame(self.root)
         main_frame.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH)
@@ -421,54 +809,132 @@ class InteractiveSegmentationTool:
         self.canvas.bind("<Configure>", self.refresh_display)
         self.root.bind("<Key>", self.process_keystroke)
 
-        control_frame = tk.Frame(self.root)
-        control_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-
-        self.image_info = tk.Label(
-            control_frame,
-            text=f"Image: {
-                self.current_index + 1}/{len(self.image_collection)}",
+        # Create the left control panel (to modify)
+        control_frame = ttk.Frame(self.root, width=200)
+        control_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+        
+        # Image navigation control 
+        nav_frame = ttk.LabelFrame(control_frame, text="Image Navigation")
+        nav_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.image_info = ttk.Label(
+            nav_frame,
+            text=f"Image: {self.current_index + 1}/{len(self.image_collection)}",
         )
         self.image_info.pack(padx=5, pady=5)
 
         self.image_slider = ttk.Scale(
-            control_frame,
+            nav_frame,
             from_=0,
             to=len(self.image_collection) - 1,
             orient=tk.HORIZONTAL,
             command=self.switch_image,
         )
         self.image_slider.set(self.current_index)
-        self.image_slider.pack(padx=5, pady=5)
+        self.image_slider.pack(padx=5, pady=5, fill=tk.X)
+        
+        # Input mode controls
+        mode_frame = ttk.LabelFrame(control_frame, text="Input Mode")
+        mode_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        mode_frame = ttk.Frame(self.root)
-        mode_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-
-        self.mode_label = tk.Label(
+        self.mode_label = ttk.Label(
             mode_frame,
-            text=f"Mode:\n{
-                self.input_mode.capitalize()}",
+            text=f"Current: {self.input_mode.capitalize()}\nClass: {self.current_class}",
             width=20,
         )
         self.mode_label.pack(padx=5, pady=5)
-
-        self.save_button = ttk.Button(
-            self.root, text="Save Masks", command=self.export_masks
+        
+        set_class_button = ttk.Button(
+            mode_frame,
+            text="Set Object Class",
+            command=self.select_class_before_annotation
         )
-        self.save_button.pack(side=tk.TOP, pady=5)
+        set_class_button.pack(fill=tk.X, padx=5, pady=2)
+        
+        mode_buttons = ttk.Frame(mode_frame)
+        mode_buttons.pack(fill=tk.X)
+        
+        ttk.Button(mode_buttons, text="Box (b)", command=lambda: self.process_keystroke(type('obj', (), {'char': 'b'})())).pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
+        ttk.Button(mode_buttons, text="Pos Point (p)", command=lambda: self.process_keystroke(type('obj', (), {'char': 'p'})())).pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
+        ttk.Button(mode_buttons, text="Neg Point (n)", command=lambda: self.process_keystroke(type('obj', (), {'char': 'n'})())).pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
+        
+        # Object attributes frame
+        attr_frame = ttk.LabelFrame(control_frame, text="Object Attributes")
+        attr_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Class selection
+        ttk.Label(attr_frame, text="Class:").pack(anchor=tk.W, padx=5, pady=2)
+        self.class_var = tk.StringVar(value=self.available_classes[0])
+        class_combo = ttk.Combobox(attr_frame, textvariable=self.class_var, values=self.available_classes)
+        class_combo.pack(fill=tk.X, padx=5, pady=2)
+        
+        # Shape selection
+        ttk.Label(attr_frame, text="Shape:").pack(anchor=tk.W, padx=5, pady=2)
+        self.shape_var = tk.StringVar(value=self.available_shapes[0])
+        shape_combo = ttk.Combobox(attr_frame, textvariable=self.shape_var, values=self.available_shapes)
+        shape_combo.pack(fill=tk.X, padx=5, pady=2)
+        
+        # Color selection
+        ttk.Label(attr_frame, text="Color:").pack(anchor=tk.W, padx=5, pady=2)
+        color_frame = ttk.Frame(attr_frame)
+        color_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        self.selected_color = tk.StringVar(value="#FF0000")  # Default red
+        self.color_button = tk.Button(
+            color_frame, 
+            text="Select Color",
+            background=self.selected_color.get(),
+            command=self.select_color
+        )
+        self.color_button.pack(fill=tk.X)
+        
+        # Value selection (for cards)
+        ttk.Label(attr_frame, text="Value (for cards):").pack(anchor=tk.W, padx=5, pady=2)
+        self.value_var = tk.StringVar(value=self.available_values[-1])  # Default to "none"
+        value_combo = ttk.Combobox(attr_frame, textvariable=self.value_var, values=self.available_values)
+        value_combo.pack(fill=tk.X, padx=5, pady=2)
+        
+        # Manual count frame
+        count_frame = ttk.LabelFrame(control_frame, text="Manual Object Count")
+        count_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.manual_count_indicator = ttk.Label(
+            count_frame, 
+            text="Manual counts: Not set",
+            foreground="red"
+        )
+        self.manual_count_indicator.pack(padx=5, pady=2, anchor=tk.W)
+        
+        ttk.Button(
+            count_frame,
+            text="Set Manual Counts",
+            command=self.open_manual_count_dialog
+        ).pack(fill=tk.X, padx=5, pady=5)
+        
+        # Action buttons
+        actions_frame = ttk.LabelFrame(control_frame, text="Actions")
+        actions_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.save_button = ttk.Button(
+            actions_frame, text="Export All", command=self.export_masks
+        )
+        self.save_button.pack(fill=tk.X, padx=5, pady=2)
 
         self.open_button = ttk.Button(
-            self.root, text="Open Folder", command=lambda: self.load_images()
+            actions_frame, text="Open Folder", command=lambda: self.load_images()
         )
-        self.open_button.pack(side=tk.TOP, pady=5)
+        self.open_button.pack(fill=tk.X, padx=5, pady=2)
 
-        self.help_button = ttk.Button(self.root, text="Help", command=self.display_help)
-        self.help_button.pack(side=tk.TOP, pady=5)
+        self.help_button = ttk.Button(actions_frame, text="Help", command=self.display_help)
+        self.help_button.pack(fill=tk.X, padx=5, pady=2)
 
-        self.quit_button = ttk.Button(self.root, text="Quit", command=self.root.quit)
-        self.quit_button.pack(side=tk.TOP)
+        self.quit_button = ttk.Button(actions_frame, text="Quit", command=self.root.quit)
+        self.quit_button.pack(fill=tk.X, padx=5, pady=2)
 
         sv_ttk.set_theme("light")
+
+        # Update the count indicateur 
+        self.update_count_indicator()
 
         self.root.protocol("WM_DELETE_WINDOW", sys.exit)
         self.root.mainloop()
@@ -478,7 +944,7 @@ class InteractiveSegmentationTool:
     def display_help(self):
         help_win = tk.Toplevel(self.root)
         help_win.title("Help")
-        help_box = tk.Text(help_win, wrap=tk.WORD, width=50, height=20)
+        help_box = tk.Text(help_win, wrap=tk.WORD, width=50, height=22)
         help_box.insert(tk.END, "Instructions:\n\n")
         help_box.insert(tk.END, "1. Use the slider to navigate images.\n")
         help_box.insert(tk.END, "2. Press 'p' for positive point mode.\n")
@@ -486,7 +952,11 @@ class InteractiveSegmentationTool:
         help_box.insert(tk.END, "4. Press 'b' for box mode.\n")
         help_box.insert(tk.END, "5. Click and drag to draw a box or add points.\n")
         help_box.insert(tk.END, "6. Press 'r' to reset current annotations.\n")
-        help_box.insert(tk.END, "7. Press 'q' to quit the application.\n")
+        help_box.insert(tk.END, "7. Press 'Enter' to confirm an object and create a new one.\n")
+        help_box.insert(tk.END, "8. Before confirming an object, set its class, shape, color and value.\n")
+        help_box.insert(tk.END, "9. Use 'Set Manual Counts' to specify object counts when automatic detection is inaccurate.\n")
+        help_box.insert(tk.END, "10. Press 'Export All' to save masks and JSON annotations.\n")
+        help_box.insert(tk.END, "11. Press 'q' to quit the application.\n")
         help_box.config(state=tk.DISABLED)
         help_box.pack(padx=10, pady=10)
 
