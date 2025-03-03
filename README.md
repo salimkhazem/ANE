@@ -56,7 +56,7 @@ python gui.py ./images sam2.1-hiera-tiny cpu
 
 ### Option 2: Using the run.sh Script
 
-For convenience, especially when using the Azure OpenAI features, you can use the run.sh script:
+For convenience, especially when using the Azure OpenAI features, you can use the run.sh script as follow:
 
 1. Edit the run.sh script to include your Azure OpenAI API key:
    ```bash
