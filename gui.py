@@ -16,6 +16,9 @@ from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 import sv_ttk
 
+# Import the legend dialog
+from gui_legend import open_legend_dialog
+
 
 def create_predictor(config_key, compute_device):
     config_files = {
@@ -204,7 +207,7 @@ class InteractiveSegmentationTool:
         self.current_index = 0
         
         # Define available object classes
-        self.available_classes = ["person", "car", "building", "card", "animal", "furniture", "other", "token", "dice"]
+        self.available_classes = ["card", "token", "dice"]
         self.available_shapes = ["rectangle", "circle", "triangle", "irregular"]
         self.available_values = ["ace", "2", "3", "4", "5", "6", "7", "8", "9", "10", "jack", "queen", "king", "joker", "none"]
         
@@ -216,6 +219,9 @@ class InteractiveSegmentationTool:
         
         # Current class selection
         self.current_class = self.available_classes[0]
+        
+        # Legend storage
+        self.legends = {}  # Indexed by image_idx
         
         self.load_images(folder_path)
 
@@ -577,7 +583,8 @@ class InteractiveSegmentationTool:
                            1}/{len(self.image_collection)}"
         )
         self.initialize_segmentation()
-        self.update_count_indicator()  # Update the manual count indicator
+        self.update_count_indicator()
+        self.update_legend_indicator()  # Update legend indicator when switching images
         self.refresh_display()
 
     def select_color(self):
@@ -758,15 +765,22 @@ class InteractiveSegmentationTool:
                 if class_name not in class_counts:
                     class_counts[class_name] = 0
             
+            # Create output data
+            output_data = {
+                "image": img_filename,
+                "total_objects": total_count,
+                "class_counts": class_counts,
+                "objects_by_class": objects_by_class,
+                "is_manual_count": is_manual
+            }
+            
+            # Add legend if available
+            if img_idx in self.legends:
+                output_data["legend"] = self.legends[img_idx]
+            
             # Save to file to json (image_name_counts.json)
             with open(f"{self.json_export_dir}/{img_filename}_counts.json", 'w') as f:
-                json.dump({
-                    "image": img_filename,
-                    "total_objects": total_count,
-                    "class_counts": class_counts,
-                    "objects_by_class": objects_by_class,
-                    "is_manual_count": is_manual
-                }, f, indent=2)
+                json.dump(output_data, f, indent=2)
             print(f"Object counts saved to {self.json_export_dir}/{img_filename}_counts.json")
 
     def open_manual_count_dialog(self):
@@ -793,6 +807,65 @@ class InteractiveSegmentationTool:
             self.class_var.set(dialog.result)
             return True
         return False
+
+    def open_legend_dialog(self):
+        """Open the legend dialog for the current image"""
+        img_idx = self.current_index
+        img_path = self.image_collection.image_paths[img_idx]
+        img_filename = pathlib.Path(img_path).stem
+        
+        # Get object data for current image
+        if img_idx in self.manual_counts and any(self.manual_counts[img_idx].values()):
+            class_counts = self.manual_counts[img_idx].copy()
+            total_count = sum(class_counts.values())
+            is_manual = True
+        else:
+            if img_idx not in self.object_metadata or not self.object_metadata[img_idx]:
+                class_counts = {cls: 0 for cls in self.available_classes}
+                total_count = 0
+                is_manual = False
+            else:
+                class_counts = {}
+                for obj_id, obj_data in self.object_metadata[img_idx].items():
+                    obj_class = obj_data["class"]
+                    if obj_class in class_counts:
+                        class_counts[obj_class] += 1
+                    else:
+                        class_counts[obj_class] = 1
+                total_count = len(self.object_metadata[img_idx])
+                is_manual = False
+        
+        # Ensure all classes are in the counts
+        for class_name in self.available_classes:
+            if class_name not in class_counts:
+                class_counts[class_name] = 0
+        
+        # Construct object data
+        object_data = {
+            "image": img_filename,
+            "total_objects": total_count,
+            "class_counts": class_counts,
+            "is_manual_count": is_manual
+        }
+        
+        # Add existing legend if available
+        if img_idx in self.legends:
+            object_data["legend"] = self.legends[img_idx]
+        
+        # Define callback to save the legend
+        def save_legend(legend_text):
+            self.legends[img_idx] = legend_text
+            self.update_legend_indicator()
+        
+        # Open dialog
+        open_legend_dialog(self.root, img_filename, object_data, save_legend)
+    
+    def update_legend_indicator(self):
+        """Update the UI to show if a legend is set for this image"""
+        if self.current_index in self.legends and self.legends[self.current_index].strip():
+            self.legend_indicator.config(foreground="green", text="Legend: Set ✓")
+        else:
+            self.legend_indicator.config(foreground="red", text="Legend: Not set")
 
     def initialize_ui(self):
         self.root = tk.Tk()
@@ -911,6 +984,23 @@ class InteractiveSegmentationTool:
             command=self.open_manual_count_dialog
         ).pack(fill=tk.X, padx=5, pady=5)
         
+        # Legend frame
+        legend_frame = ttk.LabelFrame(control_frame, text="Image Legend")
+        legend_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.legend_indicator = ttk.Label(
+            legend_frame, 
+            text="Legend: Not set",
+            foreground="red"
+        )
+        self.legend_indicator.pack(padx=5, pady=2, anchor=tk.W)
+        
+        ttk.Button(
+            legend_frame,
+            text="Edit Legend",
+            command=self.open_legend_dialog
+        ).pack(fill=tk.X, padx=5, pady=5)
+        
         # Action buttons
         actions_frame = ttk.LabelFrame(control_frame, text="Actions")
         actions_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -944,7 +1034,7 @@ class InteractiveSegmentationTool:
     def display_help(self):
         help_win = tk.Toplevel(self.root)
         help_win.title("Help")
-        help_box = tk.Text(help_win, wrap=tk.WORD, width=50, height=22)
+        help_box = tk.Text(help_win, wrap=tk.WORD, width=50, height=24)
         help_box.insert(tk.END, "Instructions:\n\n")
         help_box.insert(tk.END, "1. Use the slider to navigate images.\n")
         help_box.insert(tk.END, "2. Press 'p' for positive point mode.\n")
@@ -955,8 +1045,9 @@ class InteractiveSegmentationTool:
         help_box.insert(tk.END, "7. Press 'Enter' to confirm an object and create a new one.\n")
         help_box.insert(tk.END, "8. Before confirming an object, set its class, shape, color and value.\n")
         help_box.insert(tk.END, "9. Use 'Set Manual Counts' to specify object counts when automatic detection is inaccurate.\n")
-        help_box.insert(tk.END, "10. Press 'Export All' to save masks and JSON annotations.\n")
-        help_box.insert(tk.END, "11. Press 'q' to quit the application.\n")
+        help_box.insert(tk.END, "10. Use 'Edit Legend' to create a text description of the image, with AI assistance.\n")
+        help_box.insert(tk.END, "11. Press 'Export All' to save masks and JSON annotations.\n")
+        help_box.insert(tk.END, "12. Press 'q' to quit the application.\n")
         help_box.config(state=tk.DISABLED)
         help_box.pack(padx=10, pady=10)
 
